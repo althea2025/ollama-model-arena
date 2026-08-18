@@ -4,7 +4,7 @@ A lightweight local multi-model benchmarking arena for **Ollama**, built with **
 
 Compare multiple local LLMs with the same prompt, test multi-turn conversations while keeping each model's history isolated, toggle thinking mode, inspect generation metrics, and export results for later evaluation.
 
-> Current release: **v1.6**
+> Current release: **v1.6.1**
 
 ## Features
 
@@ -139,6 +139,8 @@ git clone https://github.com/althea2025/ollama-model-arena.git
 cd ollama-model-arena
 ```
 
+### macOS / Linux
+
 Create an isolated Python virtual environment:
 
 ```bash
@@ -158,6 +160,29 @@ Launch the app:
 ```bash
 python app.py
 ```
+
+### Windows
+
+Create an isolated Python virtual environment:
+
+```bat
+py -m venv .venv
+```
+
+Install dependencies directly into that environment:
+
+```bat
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Launch the app:
+
+```bat
+.venv\Scripts\python.exe app.py
+```
+
+If the `py` launcher is unavailable, use `python` instead.
 
 Gradio will print a local address, usually:
 
@@ -182,6 +207,14 @@ You can then launch Ollama Model Arena by double-clicking `start.command` in Fin
 If macOS blocks it the first time, right-click `start.command`, choose **Open**, and confirm **Open**.
 
 The `.venv` must already exist and the dependencies must already be installed.
+
+## Windows Quick Launcher
+
+A `start.bat` launcher is included for Windows.
+
+After completing the Windows installation above, double-click `start.bat` in File Explorer. No activation command is required: the launcher uses `.venv\Scripts\python.exe` directly.
+
+If `.venv` has not been created yet, the launcher will show the required setup commands instead of closing silently.
 
 ## Updating
 
@@ -227,7 +260,8 @@ Before sharing exported benchmark files publicly, review them for prompts, model
 ollama-model-arena/
 ├── app.py
 ├── requirements.txt
-├── start.command
+├── start.command       # macOS launcher
+├── start.bat           # Windows launcher
 ├── README.md
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
@@ -251,7 +285,7 @@ Released under the **MIT License**. See `LICENSE` for details.
 
 ## Release
 
-**v1.6**
+**v1.6.1**
 
 Highlights:
 
@@ -262,4 +296,4 @@ Highlights:
 - Benchmark-safe generation status handling
 - Token and performance metrics
 - Markdown / JSON / CSV export
-- macOS quick launcher
+- macOS and Windows quick launchers

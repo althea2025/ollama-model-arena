@@ -2,6 +2,16 @@
 
 All notable changes to Ollama Model Arena are documented here.
 
+## 1.6.1 - 2026-08-18
+
+### Added
+- Windows `start.bat` quick launcher.
+- Windows virtual-environment installation and launch instructions.
+
+### Changed
+- README now documents macOS, Linux, and Windows separately.
+- Updated UI version label to v1.6.1.
+
 ## 1.6.0 - 2026-08-17
 
 ### Added

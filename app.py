@@ -413,7 +413,7 @@ def generation_controls(prefix=""):
 
 
 with gr.Blocks(title="Ollama Model Arena") as demo:
-    gr.Markdown("# 🥊 Ollama Multi-Model Arena v1.6\n單輪比較與多輪 RP / 對話測試分成兩個分頁；多輪模式會為每顆模型獨立累積 conversation history。")
+    gr.Markdown("# 🥊 Ollama Multi-Model Arena v1.6.1\n單輪比較與多輪 RP / 對話測試分成兩個分頁；多輪模式會為每顆模型獨立累積 conversation history。")
 
     with gr.Tabs():
         with gr.Tab("📝 單輪 Arena"):
