@@ -4,9 +4,24 @@ A lightweight local multi-model benchmarking arena for **Ollama**, built with **
 
 Compare multiple local LLMs with the same prompt, test multi-turn conversations while keeping each model's history isolated, toggle thinking mode, inspect generation metrics, and export results for later evaluation.
 
-> Current release: **v1.6.1**
+> Current release: **v1.8.3**
 
 ## Features
+
+### Background Jobs for Remote / Mobile Use
+
+Single-turn and multi-turn runs are submitted to a server-side background worker. After a job is submitted, the browser connection no longer needs to stay open.
+
+- Submit a test from a phone, then switch apps or close the Safari tab
+- The Mac keeps running the Ollama job in the background
+- Progress is persisted in `exports/<run-id>/job.json`
+- Partial results are written after every completed model or round
+- Reopen the Arena later and use the **Background Jobs** tab to inspect status and download Markdown / JSON / CSV results
+- Jobs run serially to avoid loading multiple large local models at the same time
+- A running job can be asked to stop after the current Ollama generation finishes
+
+The Arena application itself must remain running. If the Arena process or Mac shuts down, an in-progress job cannot continue. Remote mode uses `caffeinate` on macOS when available to prevent idle sleep while the Arena is running.
+
 
 ### Single-turn Arena
 
@@ -234,6 +249,72 @@ python app.py
 
 or double-click `start.command` on macOS.
 
+## Mobile UI
+
+The interface is responsive on phones and tablets. In v1.7, model selection is optimized for narrow screens:
+
+- the model picker and refresh button stack vertically on mobile
+- model labels use shorter readable names
+- long choices wrap instead of being clipped
+- selected models are shown below the picker using their exact Ollama tags
+
+## Remote Access with Tailscale
+
+macOS includes two launchers:
+
+- `start.command` — local-only mode
+- `start-remote.command` — network/Tailscale mode (`0.0.0.0:7860`)
+
+Give the remote launcher execute permission once:
+
+```bash
+chmod +x start-remote.command
+```
+
+Connect your Mac and phone to the same Tailscale network, then open:
+
+```text
+http://<Mac-Tailscale-IP>:7860
+```
+
+Do not expose port `7860` directly to the public Internet.
+
+## Background Jobs result display
+
+Background tasks keep the generation settings that were fixed when the job was submitted.
+
+In the **Background Jobs** tab:
+
+- Thinking mode is shown as read-only task metadata.
+- Anonymous mode is shown as read-only task metadata.
+- **Show real model names** is enabled by default and only changes how results are displayed.
+- **Show reasoning record** is enabled by default and only changes how results are displayed.
+- Turning either display option off does not alter the job, regenerate anything, or modify the original saved result files.
+
+
+## Non-destructive masked / derived exports
+
+The Background Jobs page can generate additional export files from an existing result **without rerunning any model**.
+
+Original files remain untouched. Derived variants are written into the run's own `masked/` subfolder.
+
+```text
+exports/<run-id>/
+├── result.* or multiturn_result.*   # original source of truth
+└── masked/
+    ├── *_full_copy.*
+    ├── *_models_masked.*
+    ├── *_thinking_hidden.*
+    └── *_blind.*
+```
+
+- `full_copy`: real model names and reasoning shown
+- `models_masked`: model names replaced with neutral aliases
+- `thinking_hidden`: reasoning content removed
+- `blind`: both model names and reasoning content hidden
+
+Creating a derived export only processes saved files. It does not call Ollama and never overwrites the original result files.
+
 ## Output
 
 Generated benchmark results are stored locally and can be exported in formats such as:
@@ -260,7 +341,8 @@ Before sharing exported benchmark files publicly, review them for prompts, model
 ollama-model-arena/
 ├── app.py
 ├── requirements.txt
-├── start.command       # macOS launcher
+├── start.command       # macOS local launcher
+├── start-remote.command # macOS Tailscale / LAN launcher
 ├── start.bat           # Windows launcher
 ├── README.md
 ├── CHANGELOG.md
@@ -285,7 +367,7 @@ Released under the **MIT License**. See `LICENSE` for details.
 
 ## Release
 
-**v1.6.1**
+**v1.8.3**
 
 Highlights:
 
@@ -296,4 +378,5 @@ Highlights:
 - Benchmark-safe generation status handling
 - Token and performance metrics
 - Markdown / JSON / CSV export
-- macOS and Windows quick launchers
+- macOS local / remote and Windows quick launchers
+- Persistent background jobs for mobile / remote use
