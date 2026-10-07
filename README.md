@@ -4,7 +4,7 @@ A lightweight local multi-model benchmarking arena for **Ollama**, built with **
 
 Compare multiple local LLMs with the same prompt, test multi-turn conversations while keeping each model's history isolated, toggle thinking mode, inspect generation metrics, and export results for later evaluation.
 
-> Current release: **v1.8.3**
+> Current release: **v1.8.5**
 
 ## Features
 
@@ -292,6 +292,16 @@ In the **Background Jobs** tab:
 - Turning either display option off does not alter the job, regenerate anything, or modify the original saved result files.
 
 
+
+## Mobile Background Jobs UX
+
+v1.8.4 improves the Background Jobs page on phones:
+
+- Job selector and refresh button stack vertically at mobile widths.
+- Result display controls and action buttons become full-width touch targets.
+- The long result preview is now collapsible, so downloads are easier to reach.
+- Original and derived download controls also stack cleanly on narrow screens.
+
 ## Non-destructive masked / derived exports
 
 The Background Jobs page can generate additional export files from an existing result **without rerunning any model**.
@@ -367,7 +377,7 @@ Released under the **MIT License**. See `LICENSE` for details.
 
 ## Release
 
-**v1.8.3**
+**v1.8.4**
 
 Highlights:
 

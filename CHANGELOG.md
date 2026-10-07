@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.8.5 - 2026-10-07
+
+- Fix duplicate background jobs caused by repeated/duplicate submit events; identical submissions within 5 seconds are deduplicated server-side.
+- Background-job cancellation now interrupts the active Ollama streaming request instead of waiting for the whole model response to finish.
+- Stop button runs outside the Gradio event queue so cancellation is recorded immediately for the selected job.
+- Partial output produced before cancellation is preserved in exports.
+
+## v1.8.4 - 2026-08-18
+
+- Improved Background Jobs mobile layout.
+- Job selector / refresh controls now stack on narrow screens.
+- Result display options, action buttons, and download rows use full-width mobile controls.
+- Added a collapsible result preview so users can reach download controls faster.
+- No launcher files were changed.
+
+
 ## v1.8.3 - 2026-08-18
 
 - Added non-destructive masked / derived exports in Background Jobs.

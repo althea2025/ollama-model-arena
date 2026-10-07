@@ -8,6 +8,8 @@ import random
 import queue
 import threading
 import traceback
+import time
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -178,6 +180,34 @@ JOB_QUEUE = queue.Queue()
 JOB_META_NAME = "job.json"
 JOB_REQUEST_NAME = "request.json"
 
+# Guard against accidental double-submit (double click / duplicated Gradio event).
+_SUBMIT_LOCK = threading.Lock()
+_RECENT_SUBMITS = {}
+_SUBMIT_DEDUP_SECONDS = 5.0
+
+def _request_fingerprint(mode, request):
+    stable = json.dumps({"mode": mode, "request": request}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(stable.encode("utf-8")).hexdigest()
+
+def _recent_duplicate(mode, request):
+    now = time.monotonic()
+    fp = _request_fingerprint(mode, request)
+    with _SUBMIT_LOCK:
+        # prune old entries
+        for key, value in list(_RECENT_SUBMITS.items()):
+            if now - value[0] > _SUBMIT_DEDUP_SECONDS:
+                _RECENT_SUBMITS.pop(key, None)
+        old = _RECENT_SUBMITS.get(fp)
+        if old and now - old[0] <= _SUBMIT_DEDUP_SECONDS:
+            return old[1]
+        _RECENT_SUBMITS[fp] = (now, "__PENDING__")
+        return None
+
+def _remember_submit(mode, request, job_id):
+    fp = _request_fingerprint(mode, request)
+    with _SUBMIT_LOCK:
+        _RECENT_SUBMITS[fp] = (time.monotonic(), job_id)
+
 
 def _now_iso():
     return datetime.now().astimezone().isoformat()
@@ -238,6 +268,26 @@ def _job_cancel_requested(run_dir):
     return bool(_read_job_meta(run_dir).get("cancel_requested"))
 
 
+def _live_progress_callback(run_dir, label):
+    last_write = [0.0]
+    def callback(info):
+        now = time.monotonic()
+        if now - last_write[0] < 0.5:
+            return
+        last_write[0] = now
+        elapsed = float(info.get("elapsed_seconds") or 0)
+        chars = int(info.get("output_chars") or 0)
+        rate = chars / elapsed if elapsed > 0 else 0
+        _update_job_meta(
+            run_dir,
+            current=f"{label}｜正在生成… {elapsed:.1f} 秒｜{chars:,} 字元｜{rate:.1f} 字元/秒",
+            live_elapsed_seconds=round(elapsed, 1),
+            live_output_chars=chars,
+            live_chars_per_second=round(rate, 1),
+        )
+    return callback
+
+
 def _execute_single_background(run_dir, request):
     models = request["models"]
     settings = request["settings"]
@@ -247,7 +297,7 @@ def _execute_single_background(run_dir, request):
     for index, item in enumerate(models, 1):
         model, alias = item["model"], item["display_name"]
         _update_job_meta(run_dir, current=f"{alias} ({index}/{len(models)})")
-        result = generate(model, request["system_prompt"], request["user_prompt"], settings)
+        result = generate(model, request["system_prompt"], request["user_prompt"], settings, cancel_check=lambda: _job_cancel_requested(run_dir), progress_callback=_live_progress_callback(run_dir, f"{alias} ({index}/{len(models)})"))
         result["think"] = bool(settings.get("think"))
         result["display_name"] = alias
         results.append(result)
@@ -257,6 +307,9 @@ def _execute_single_background(run_dir, request):
             "anonymous": request["anonymous"], "mapping": mapping_out, "results": results,
         }
         export_run(partial, Path(run_dir))
+        if result.get("status") == "cancelled":
+            _update_job_meta(run_dir, current=f"已中斷 {alias}")
+            return "cancelled"
         _update_job_meta(run_dir, completed_steps=index, current=f"完成 {alias}: {status_label(result)}")
         if _job_cancel_requested(run_dir):
             return "cancelled"
@@ -287,7 +340,7 @@ def _execute_multi_background(run_dir, request):
                 completed_steps=completed_steps,
             )
             messages.append({"role": "user", "content": user_text})
-            result = generate_messages(model, messages, settings)
+            result = generate_messages(model, messages, settings, cancel_check=lambda: _job_cancel_requested(run_dir), progress_callback=_live_progress_callback(run_dir, f"{alias} — Round {round_idx}/{len(user_rounds)} (Model {model_index}/{len(models)})"))
             result["think"] = bool(settings.get("think"))
             result["display_name"] = alias
             session["rounds"].append({"round": round_idx, "user": user_text, "result": result})
@@ -302,6 +355,9 @@ def _execute_multi_background(run_dir, request):
                 "mapping": mapping_out, "sessions": sessions,
             }
             export_multiturn(partial, Path(run_dir))
+            if result.get("status") == "cancelled":
+                _update_job_meta(run_dir, current=f"已中斷 {alias} — Round {round_idx}")
+                return "cancelled"
             _update_job_meta(
                 run_dir,
                 completed_steps=completed_steps,
@@ -334,7 +390,7 @@ def _job_worker():
                 run_dir,
                 state=final_state,
                 finished_at=_now_iso(),
-                current="已完成" if final_state == "completed" else "已取消（目前生成完成後停止）",
+                current="已完成" if final_state == "completed" else "已取消",
             )
         except Exception:
             _update_job_meta(
@@ -397,7 +453,11 @@ def submit_single_job(selected, system_prompt, user_prompt, temperature, top_p, 
         "settings": settings, "anonymous": bool(anonymous), "show_thinking": bool(show_thinking),
         "models": models, "mapping": mapping_out,
     }
+    duplicate = _recent_duplicate("single_turn", request)
+    if duplicate:
+        return "⚠️ 已忽略重複送出；相同任務正在建立中。" if duplicate == "__PENDING__" else f"⚠️ 已忽略重複送出；同一任務剛剛已建立：`{duplicate}`。"
     _new_job(run_dir, "single_turn", request, len(models))
+    _remember_submit("single_turn", request, run_dir.name)
     JOB_QUEUE.put({"run_dir": str(run_dir), "mode": "single_turn", "request": request})
     return (f"✅ 已建立背景任務 `{run_dir.name}`。你現在可以切到別的 App、關閉 Safari 分頁，"
             f"Mac 仍會繼續執行。到「📋 背景任務」分頁查看進度與結果。")
@@ -418,7 +478,11 @@ def submit_multi_job(selected, system_prompt, temperature, top_p, top_k, repeat_
         "settings": settings, "anonymous": bool(anonymous), "show_thinking": bool(show_thinking),
         "models": models, "mapping": mapping_out,
     }
+    duplicate = _recent_duplicate("multi_turn", request)
+    if duplicate:
+        return "⚠️ 已忽略重複送出；相同任務正在建立中。" if duplicate == "__PENDING__" else f"⚠️ 已忽略重複送出；同一任務剛剛已建立：`{duplicate}`。"
     _new_job(run_dir, "multi_turn", request, len(models) * len(user_rounds))
+    _remember_submit("multi_turn", request, run_dir.name)
     JOB_QUEUE.put({"run_dir": str(run_dir), "mode": "multi_turn", "request": request})
     return (f"✅ 已建立背景任務 `{run_dir.name}`（{len(models)} models × {len(user_rounds)} rounds）。"
             f"你現在可以離開頁面，Mac 會繼續跑。到「📋 背景任務」分頁查看。")
@@ -731,8 +795,8 @@ def request_cancel(job_id):
         return "找不到任務。"
     if meta.get("state") in {"completed", "cancelled", "failed", "interrupted"}:
         return f"任務已是 `{meta.get('state')}`，不需要取消。"
-    _update_job_meta(run_dir, cancel_requested=True, current="已要求停止；會在目前這次模型生成完成後停止")
-    return "🛑 已要求停止。正在生成中的 Ollama request 不會硬切斷；完成目前模型/輪次後會停止後續工作。"
+    _update_job_meta(run_dir, cancel_requested=True, current="正在停止目前生成…")
+    return f"🛑 已送出停止要求：`{job_id}`。目前的 Ollama 生成會在下一個串流片段時中斷。"
 
 
 # ---------- Single-turn ----------
@@ -1030,6 +1094,30 @@ MOBILE_CSS = r"""
   }
   .mobile-title h1 { font-size: 1.72rem !important; line-height: 1.15 !important; }
   .mobile-title p { font-size: 0.96rem !important; }
+
+  /* Background Jobs: use full-width controls on phones. */
+  .job-toolbar,
+  .job-display-options,
+  .job-actions,
+  .job-download-row {
+    flex-direction: column !important;
+    gap: 10px !important;
+    align-items: stretch !important;
+  }
+  .job-toolbar > *,
+  .job-display-options > *,
+  .job-actions > *,
+  .job-download-row > * {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+  }
+  .job-picker input,
+  .job-picker textarea { font-size: 16px !important; }
+  .job-toolbar button,
+  .job-actions button { min-height: 48px !important; }
+  .job-result-accordion { margin-top: 8px !important; }
+  .job-result-accordion .wrap { overflow-wrap: anywhere !important; }
 }
 """
 
@@ -1055,7 +1143,7 @@ def generation_controls(prefix=""):
 
 
 with gr.Blocks(title="Ollama Model Arena", css=MOBILE_CSS) as demo:
-    gr.Markdown("# 🥊 Ollama Multi-Model Arena v1.8.3\n單輪比較與多輪 RP / 對話測試分成兩個分頁；多輪模式會為每顆模型獨立累積 conversation history。", elem_classes=["mobile-title"])
+    gr.Markdown("# 🥊 Ollama Multi-Model Arena v1.8.6\n單輪比較與多輪 RP / 對話測試分成兩個分頁；多輪模式會為每顆模型獨立累積 conversation history。", elem_classes=["mobile-title"])
 
     with gr.Tabs():
         with gr.Tab("📝 單輪 Arena"):
@@ -1122,8 +1210,8 @@ with gr.Blocks(title="Ollama Model Arena", css=MOBILE_CSS) as demo:
 
         with gr.Tab("📋 背景任務"):
             gr.Markdown("手機送出測試後可以直接離開 Safari。任務由 Mac 上的背景 worker 繼續執行，結果會逐模型／逐輪寫入 `exports/`。")
-            with gr.Row():
-                j_select = gr.Dropdown(label="背景任務", choices=[], filterable=True)
+            with gr.Row(elem_classes=["job-toolbar"]):
+                j_select = gr.Dropdown(label="背景任務", choices=[], filterable=True, elem_classes=["job-picker"])
                 j_refresh = gr.Button("🔄 更新任務列表")
             j_list_status = gr.Markdown("尚未讀取任務。")
             gr.Markdown(
@@ -1135,24 +1223,25 @@ with gr.Blocks(title="Ollama Model Arena", css=MOBILE_CSS) as demo:
                 "下面兩個選項只控制預覽與新產生的衍生輸出。"
                 "**原始 Markdown / JSON / CSV 永遠保留，不會被覆蓋。**"
             )
-            with gr.Row():
+            with gr.Row(elem_classes=["job-display-options"]):
                 j_reveal = gr.Checkbox(value=True, label="顯示真實模型名稱")
                 j_show = gr.Checkbox(value=True, label="顯示推理紀錄")
-            with gr.Row():
+            with gr.Row(elem_classes=["job-actions"]):
                 j_load = gr.Button("📄 查看 / 更新結果", variant="primary")
                 j_mask = gr.Button("🎭 產生遮罩 / 衍生輸出")
                 j_cancel = gr.Button("🛑 停止任務")
             j_cancel_status = gr.Markdown("")
             j_mask_status = gr.Markdown("")
             j_status = gr.Markdown("")
-            j_results = gr.Markdown("")
+            with gr.Accordion("📄 結果預覽（點這裡收合 / 展開）", open=True, elem_classes=["job-result-accordion"]):
+                j_results = gr.Markdown("")
             gr.Markdown("#### 原始結果（永遠保留）")
-            with gr.Row():
+            with gr.Row(elem_classes=["job-download-row"]):
                 j_md = gr.File(label="原始 Markdown")
                 j_json = gr.File(label="原始 JSON")
                 j_csv = gr.File(label="原始 CSV")
             gr.Markdown("#### 遮罩 / 衍生輸出")
-            with gr.Row():
+            with gr.Row(elem_classes=["job-download-row"]):
                 j_mask_md = gr.File(label="衍生 Markdown")
                 j_mask_json = gr.File(label="衍生 JSON")
                 j_mask_csv = gr.File(label="衍生 CSV")
@@ -1200,7 +1289,7 @@ with gr.Blocks(title="Ollama Model Arena", css=MOBILE_CSS) as demo:
         inputs=[j_select, j_reveal, j_show],
         outputs=[j_mask_status, j_mask_md, j_mask_json, j_mask_csv],
     )
-    j_cancel.click(request_cancel, inputs=j_select, outputs=j_cancel_status)
+    j_cancel.click(request_cancel, inputs=j_select, outputs=j_cancel_status, queue=False)
 
 
 if __name__ == "__main__":
